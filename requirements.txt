@@ -1,0 +1,9 @@
+Flask
+Flask-PyMongo
+Flask-JWT-Extended
+Flask-Cors
+pymongo
+python-dotenv
+bcrypt
+dnspython
+email-validator
