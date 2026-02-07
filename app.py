@@ -1623,4 +1623,4 @@ if __name__ == '__main__':
     
     # Run the app
     debug = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
-    app.run(host='0.0.0.0', port=9000, debug=debug)
+    app.run(host='0.0.0.0', port=8000, debug=debug)
