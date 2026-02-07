@@ -37,24 +37,14 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# CORS configuration - allow origins from env or default for dev
-# Default includes common localhost ports for React (3000, 5173) and Vite (5173)
-_cors_origins_default = '*,http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174'
-_cors_origins = os.getenv('CORS_ORIGINS', _cors_origins_default)
-# Parse origins - support both comma-separated and space-separated
-cors_origins_raw = [o.strip() for o in _cors_origins.replace(' ', ',').split(',') if o.strip()]
-
-# Check if wildcard is in the list - if so, remove it from Flask-CORS config (handle in after_request)
-has_wildcard = '*' in cors_origins_raw
-cors_origins_list = [o for o in cors_origins_raw if o != '*'] if has_wildcard else cors_origins_raw
-
-# Configure CORS - Flask-CORS handles specific origins, we handle wildcard in after_request
+# CORS configuration - Allow all origins and ports (no CORS errors)
+# This allows requests from any origin, any port (localhost, production, etc.)
 CORS(
     app,
-    origins=cors_origins_list,  # Specific origins only (wildcard handled separately)
+    origins="*",  # Allow all origins - no CORS errors
     allow_headers=['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
     methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    supports_credentials=True,  # Credentials work for specific origins
+    supports_credentials=False,  # Must be False when using wildcard * (browser security rule)
     expose_headers=['Content-Type', 'Authorization'],
     max_age=600
 )
@@ -1562,48 +1552,26 @@ def health_check():
 
 @app.after_request
 def add_cors_headers_to_response(response):
-    """Ensure CORS headers are on every response so browsers don't block on errors."""
+    """Ensure CORS headers are on every response - Allow all origins and ports."""
     origin = request.headers.get('Origin')
     
-    # Get allowed origins from env or use default
-    cors_env = os.getenv('CORS_ORIGINS', _cors_origins_default)
-    allowed_origins = [o.strip() for o in cors_env.replace(' ', ',').split(',') if o.strip()]
-    has_wildcard = '*' in allowed_origins
-    
-    # Remove wildcard from list for specific origin checking
-    specific_origins = [o for o in allowed_origins if o != '*']
-    
-    # Always set CORS headers if not already set
+    # Always allow all origins - no CORS errors
     if 'Access-Control-Allow-Origin' not in response.headers:
         if origin:
-            # Priority 1: Check if origin is in specific allowed list
-            if origin in specific_origins:
-                response.headers['Access-Control-Allow-Origin'] = origin
-                response.headers['Access-Control-Allow-Credentials'] = 'true'
-            # Priority 2: Allow localhost origins for development (even if not explicitly listed)
-            elif origin.startswith('http://localhost:') or origin.startswith('http://127.0.0.1:'):
-                response.headers['Access-Control-Allow-Origin'] = origin
-                response.headers['Access-Control-Allow-Credentials'] = 'true'
-            # Priority 3: Use wildcard if specified (but no credentials)
-            elif has_wildcard:
-                response.headers['Access-Control-Allow-Origin'] = '*'
-                # Do not set Credentials when using * (browser security rule)
-            else:
-                # If origin not in list and no wildcard, still allow for development
-                response.headers['Access-Control-Allow-Origin'] = origin
-                response.headers['Access-Control-Allow-Credentials'] = 'true'
+            # Allow the requesting origin
+            response.headers['Access-Control-Allow-Origin'] = origin
         else:
-            # If no origin header (same-origin request), allow it
-            if has_wildcard:
-                response.headers['Access-Control-Allow-Origin'] = '*'
+            # If no origin header, allow all
+            response.headers['Access-Control-Allow-Origin'] = '*'
     
-    # Ensure other CORS headers are set
+    # Set other CORS headers
     if 'Access-Control-Allow-Headers' not in response.headers:
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With, Accept'
     if 'Access-Control-Allow-Methods' not in response.headers:
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
     if 'Access-Control-Max-Age' not in response.headers:
         response.headers['Access-Control-Max-Age'] = '600'
+    # Note: Access-Control-Allow-Credentials is not set when using wildcard (browser security)
     
     return response
 
