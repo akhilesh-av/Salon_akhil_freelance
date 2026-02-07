@@ -6,6 +6,7 @@ Main application file containing all API endpoints
 import os
 from datetime import datetime, timedelta
 from functools import wraps
+from urllib.parse import quote_plus
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -14,14 +15,14 @@ from flask_jwt_extended import (
     get_jwt_identity, get_jwt
 )
 from pymongo import MongoClient
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import DuplicateKeyError, ServerSelectionTimeoutError
 from bson import ObjectId
 from dotenv import load_dotenv
 
 from utils import (
     hash_password, verify_password,
-    send_booking_confirmation_email, send_booking_cancellation_email,
-    send_booking_status_update_email,
+    # send_booking_confirmation_email, send_booking_cancellation_email,
+    # send_booking_status_update_email,  # Email functionality commented out - will be added later
     calculate_discounted_price, is_discount_active,
     is_future_datetime, format_date, format_time,
     serialize_doc, serialize_docs,
@@ -61,8 +62,72 @@ jwt = JWTManager(app)
 # ==================== DATABASE CONNECTION ====================
 
 mongo_uri = os.getenv('MONGO_URI', 'mongodb://localhost:27017/salon_db')
-client = MongoClient(mongo_uri)
-db = client.get_database()
+db_name = os.getenv('MONGO_DB_NAME', 'salon_db')
+
+# Parse database name from URI if not explicitly set
+# For MongoDB Atlas (mongodb+srv://), database name might be in the path
+if not db_name or db_name == 'salon_db':
+    # Try to extract from URI
+    uri_parts = mongo_uri.split('//')
+    if len(uri_parts) > 1:
+        path_part = uri_parts[-1].split('@')[-1]  # Get part after @
+        if '/' in path_part:
+            db_from_uri = path_part.split('/')[1].split('?')[0]  # Get database name, remove query params
+            if db_from_uri and db_from_uri not in ['', '?']:
+                db_name = db_from_uri
+
+# Ensure connection string has proper SSL/TLS parameters for Atlas
+# Add retryWrites and other recommended parameters if not present
+if 'mongodb+srv://' in mongo_uri:
+    # Check if retryWrites is already in the URI
+    if 'retryWrites' not in mongo_uri:
+        separator = '&' if '?' in mongo_uri else '?'
+        mongo_uri = f"{mongo_uri}{separator}retryWrites=true&w=majority"
+
+# Create MongoDB client with connection options
+try:
+    client = MongoClient(
+        mongo_uri,
+        serverSelectionTimeoutMS=5000,  # 5 second timeout
+        connectTimeoutMS=10000,  # 10 second connection timeout
+        socketTimeoutMS=20000,  # 20 second socket timeout
+        retryWrites=True
+    )
+except Exception as e:
+    print(f"✗ Error creating MongoDB client: {e}")
+    raise
+
+# Get database
+db = client.get_database(db_name)
+
+# Test connection (non-blocking - app will start but DB operations will fail if connection fails)
+try:
+    client.admin.command('ping')
+    print(f"✓ Successfully connected to MongoDB database: {db_name}")
+except ServerSelectionTimeoutError as e:
+    print(f"⚠ Warning: Failed to connect to MongoDB (Server Selection Timeout)")
+    print("⚠ The application will start, but database operations will fail.")
+    print("\n⚠ Troubleshooting steps:")
+    print("   1. Check your MongoDB Atlas connection string in .env file")
+    print("   2. Whitelist your IP address in MongoDB Atlas:")
+    print("      - Go to MongoDB Atlas → Network Access → Add IP Address")
+    print("      - Add '0.0.0.0/0' for testing (allow all IPs) or your specific IP")
+    print("   3. Verify your database user credentials are correct")
+    print("   4. Check if your password contains special characters that need URL encoding")
+    print(f"\n   Connection string format: mongodb+srv://username:password@cluster.mongodb.net/database?retryWrites=true&w=majority")
+    # Don't raise - let the app start, it will fail when trying to use DB
+except Exception as e:
+    error_msg = str(e)
+    if 'SSL' in error_msg or 'TLS' in error_msg:
+        print(f"⚠ Warning: SSL/TLS connection error")
+        print("⚠ This usually means:")
+        print("   1. Your IP address is not whitelisted in MongoDB Atlas Network Access")
+        print("   2. Network/firewall is blocking the connection")
+        print("   3. MongoDB Atlas cluster is not accessible")
+    else:
+        print(f"⚠ Warning: Failed to connect to MongoDB: {error_msg}")
+    print("⚠ The application will start, but database operations will fail.")
+    # Don't raise - let the app start, it will fail when trying to use DB
 
 # Collections
 users_collection = db['users']
@@ -1079,16 +1144,16 @@ def create_booking():
         result = bookings_collection.insert_one(booking)
         booking['_id'] = result.inserted_id
         
-        # Send confirmation email
-        send_booking_confirmation_email(
-            customer_email=customer['email'],
-            customer_name=customer['name'],
-            service_title=service['title'],
-            booking_date=format_date(datetime.strptime(data['date'], "%Y-%m-%d")),
-            booking_time=format_time(data['time_slot']),
-            final_price=final_price,
-            booking_id=str(result.inserted_id)
-        )
+        # Send confirmation email - COMMENTED OUT (will be added later)
+        # send_booking_confirmation_email(
+        #     customer_email=customer['email'],
+        #     customer_name=customer['name'],
+        #     service_title=service['title'],
+        #     booking_date=format_date(datetime.strptime(data['date'], "%Y-%m-%d")),
+        #     booking_time=format_time(data['time_slot']),
+        #     final_price=final_price,
+        #     booking_id=str(result.inserted_id)
+        # )
         
         return jsonify({
             'message': 'Booking created successfully',
@@ -1151,16 +1216,16 @@ def cancel_booking(booking_id):
         {'$set': {'status': 'Cancelled', 'updated_at': datetime.utcnow()}}
     )
     
-    # Send cancellation email
-    send_booking_cancellation_email(
-        customer_email=booking['customer_email'],
-        customer_name=booking['customer_name'],
-        service_title=booking['service_title'],
-        booking_date=format_date(datetime.strptime(booking['date'], "%Y-%m-%d")),
-        booking_time=format_time(booking['time_slot']),
-        booking_id=str(booking['_id']),
-        cancelled_by='customer'
-    )
+    # Send cancellation email - COMMENTED OUT (will be added later)
+    # send_booking_cancellation_email(
+    #     customer_email=booking['customer_email'],
+    #     customer_name=booking['customer_name'],
+    #     service_title=booking['service_title'],
+    #     booking_date=format_date(datetime.strptime(booking['date'], "%Y-%m-%d")),
+    #     booking_time=format_time(booking['time_slot']),
+    #     booking_id=str(booking['_id']),
+    #     cancelled_by='customer'
+    # )
     
     return jsonify({'message': 'Booking cancelled successfully'}), 200
 
@@ -1234,17 +1299,17 @@ def update_booking_status(booking_id):
         {'$set': {'status': new_status, 'updated_at': datetime.utcnow()}}
     )
     
-    # Send status update email if status changed
-    if old_status != new_status:
-        send_booking_status_update_email(
-            customer_email=booking['customer_email'],
-            customer_name=booking['customer_name'],
-            service_title=booking['service_title'],
-            booking_date=format_date(datetime.strptime(booking['date'], "%Y-%m-%d")),
-            booking_time=format_time(booking['time_slot']),
-            booking_id=str(booking['_id']),
-            new_status=new_status
-        )
+    # Send status update email if status changed - COMMENTED OUT (will be added later)
+    # if old_status != new_status:
+    #     send_booking_status_update_email(
+    #         customer_email=booking['customer_email'],
+    #         customer_name=booking['customer_name'],
+    #         service_title=booking['service_title'],
+    #         booking_date=format_date(datetime.strptime(booking['date'], "%Y-%m-%d")),
+    #         booking_time=format_time(booking['time_slot']),
+    #         booking_id=str(booking['_id']),
+    #         new_status=new_status
+    #     )
     
     return jsonify({
         'message': f'Booking status updated to {new_status}',
@@ -1553,4 +1618,4 @@ if __name__ == '__main__':
     
     # Run the app
     debug = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
-    app.run(host='0.0.0.0', port=5000, debug=debug)
+    app.run(host='0.0.0.0', port=9000, debug=debug)
