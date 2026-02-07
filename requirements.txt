@@ -7,3 +7,4 @@ python-dotenv
 bcrypt
 dnspython
 email-validator
+gunicorn
