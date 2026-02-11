@@ -5,6 +5,7 @@ Main application file containing all API endpoints
 
 import math
 import os
+import re
 from datetime import datetime, timedelta
 from functools import wraps
 from urllib.parse import quote_plus
@@ -144,6 +145,28 @@ users_collection.create_index('username', unique=True, sparse=True)
 bookings_collection.create_index([('service_id', 1), ('date', 1), ('time_slot', 1)], unique=True)
 # One attendance record per staff per day (prevents multiple check-ins same day)
 attendance_collection.create_index([('staff_id', 1), ('date', 1)], unique=True)
+# Services: no duplicate titles (case-insensitive). Skip if DB already has duplicates.
+try:
+    services_collection.create_index(
+        [('title', 1)],
+        unique=True,
+        collation={'locale': 'en', 'strength': 2}
+    )
+except Exception:
+    pass
+# Staff: no duplicate phone or email. Skip if DB already has duplicates.
+try:
+    staff_collection.create_index([('phone', 1)], unique=True)
+except Exception:
+    pass
+try:
+    staff_collection.create_index(
+        [('email', 1)],
+        unique=True,
+        partialFilterExpression={'email': {'$exists': True, '$ne': ''}}
+    )
+except Exception:
+    pass
 
 
 # ==================== HELPER FUNCTIONS ====================
@@ -182,6 +205,45 @@ def get_active_discount(service_id: str) -> dict:
         'end_date': {'$gte': today}
     })
     return discount
+
+
+def service_title_exists(title: str, exclude_service_id: str = None) -> bool:
+    """Check if a service with the same title already exists (case-insensitive). Optionally exclude a service ID (for updates)."""
+    query = {'title': {'$regex': f'^{re.escape(title)}$', '$options': 'i'}}
+    if exclude_service_id:
+        try:
+            query['_id'] = {'$ne': ObjectId(exclude_service_id)}
+        except Exception:
+            pass
+    return services_collection.find_one(query) is not None
+
+
+def staff_phone_exists(phone: str, exclude_staff_id: str = None) -> bool:
+    """Check if a staff member with the same phone already exists. Optionally exclude a staff ID (for updates)."""
+    phone_clean = (phone or '').strip()
+    if not phone_clean:
+        return False
+    query = {'phone': phone_clean}
+    if exclude_staff_id:
+        try:
+            query['_id'] = {'$ne': ObjectId(exclude_staff_id)}
+        except Exception:
+            pass
+    return staff_collection.find_one(query) is not None
+
+
+def staff_email_exists(email: str, exclude_staff_id: str = None) -> bool:
+    """Check if a staff member with the same email already exists (case-insensitive). Only checks when email is non-empty. Optionally exclude a staff ID (for updates)."""
+    email_clean = (email or '').strip()
+    if not email_clean:
+        return False
+    query = {'email': {'$regex': f'^{re.escape(email_clean)}$', '$options': 'i'}}
+    if exclude_staff_id:
+        try:
+            query['_id'] = {'$ne': ObjectId(exclude_staff_id)}
+        except Exception:
+            pass
+    return staff_collection.find_one(query) is not None
 
 
 def parse_pagination(max_per_page=100, default_per_page=20):
@@ -413,8 +475,12 @@ def create_service():
     if data['duration'] <= 0:
         return jsonify({'error': 'Duration must be greater than 0'}), 400
     
+    if service_title_exists(data['title'].strip()):
+        return jsonify({'error': 'A service with this title already exists'}), 409
+    
+    title = data['title'].strip()
     service = {
-        'title': data['title'],
+        'title': title,
         'description': data['description'],
         'base_price': float(data['base_price']),
         'discounted_price': data.get('discounted_price'),
@@ -524,7 +590,13 @@ def update_service(service_id):
                 return jsonify({'error': 'Base price must be greater than 0'}), 400
             if field == 'duration' and data[field] <= 0:
                 return jsonify({'error': 'Duration must be greater than 0'}), 400
-            update_data[field] = data[field]
+            if field == 'title':
+                new_title = data['title'].strip()
+                if service_title_exists(new_title, exclude_service_id=service_id):
+                    return jsonify({'error': 'A service with this title already exists'}), 409
+                update_data['title'] = new_title
+            else:
+                update_data[field] = data[field]
     
     services_collection.update_one(
         {'_id': ObjectId(service_id)},
@@ -794,10 +866,19 @@ def create_staff():
     if data['role'] not in ['stylist', 'receptionist', 'manager', 'therapist']:
         return jsonify({'error': 'Invalid role. Use: stylist, receptionist, manager, therapist'}), 400
     
+    phone = (data['phone'] or '').strip()
+    if not phone:
+        return jsonify({'error': 'Phone is required'}), 400
+    if staff_phone_exists(phone):
+        return jsonify({'error': 'A staff member with this phone number already exists'}), 409
+    email = (data.get('email') or '').strip()
+    if email and staff_email_exists(email):
+        return jsonify({'error': 'A staff member with this email already exists'}), 409
+    
     staff = {
-        'full_name': data['full_name'],
-        'email': data.get('email', ''),
-        'phone': data['phone'],
+        'full_name': data['full_name'].strip(),
+        'email': email,
+        'phone': phone,
         'role': data['role'],
         'working_days': data.get('working_days', []),  # e.g. ["Monday", "Tuesday", ...]
         'shift_timings': data.get('shift_timings', {}),  # e.g. {"start": "09:00", "end": "17:00"}
@@ -895,7 +976,20 @@ def update_staff(staff_id):
     allowed_fields = ['full_name', 'email', 'phone', 'role', 'working_days', 'shift_timings', 'status']
     for field in allowed_fields:
         if field in data:
-            update_data[field] = data[field]
+            if field == 'phone':
+                phone = (data['phone'] or '').strip()
+                if not phone:
+                    return jsonify({'error': 'Phone cannot be empty'}), 400
+                if staff_phone_exists(phone, exclude_staff_id=staff_id):
+                    return jsonify({'error': 'A staff member with this phone number already exists'}), 409
+                update_data['phone'] = phone
+            elif field == 'email':
+                email = (data.get('email') or '').strip()
+                if email and staff_email_exists(email, exclude_staff_id=staff_id):
+                    return jsonify({'error': 'A staff member with this email already exists'}), 409
+                update_data['email'] = email
+            else:
+                update_data[field] = data[field]
     
     if 'role' in data and data['role'] not in ['stylist', 'receptionist', 'manager', 'therapist']:
         return jsonify({'error': 'Invalid role'}), 400
