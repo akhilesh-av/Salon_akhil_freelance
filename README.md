@@ -12,6 +12,7 @@ A Flask-based REST API for Salon Shop Management System with MongoDB integration
 - **Staff Management**: Create, update, view, and deactivate staff (soft delete)
 - **Attendance Management**: Daily check-in/check-out and attendance status
 - **Admin Dashboard**: Summary API, statistics, revenue reports, and analytics
+- **Pagination & filtering**: All listing APIs support `page`, `per_page`, and endpoint-specific filters (status, date range, search, etc.)
 
 ## Setup
 
@@ -76,7 +77,7 @@ Server will start at `http://localhost:5000`
 
 | Method | Endpoint | Description | Auth |
 |--------|----------|-------------|------|
-| GET | `/api/services` | Get all services | - |
+| GET | `/api/services` | Get all services (paginated, filterable) | - |
 | GET | `/api/services/:id` | Get service by ID | - |
 | POST | `/api/services` | Create service | Admin |
 | PUT | `/api/services/:id` | Update service | Admin |
@@ -86,7 +87,7 @@ Server will start at `http://localhost:5000`
 
 | Method | Endpoint | Description | Auth |
 |--------|----------|-------------|------|
-| GET | `/api/discounts` | Get all discounts | Admin |
+| GET | `/api/discounts` | Get all discounts (paginated, filterable) | Admin |
 | GET | `/api/discounts/:id` | Get discount by ID | Admin |
 | POST | `/api/discounts` | Create discount | Admin |
 | PUT | `/api/discounts/:id` | Update discount | Admin |
@@ -97,7 +98,7 @@ Server will start at `http://localhost:5000`
 | Method | Endpoint | Description | Auth |
 |--------|----------|-------------|------|
 | POST | `/api/admin/staff` | Create staff | Admin |
-| GET | `/api/admin/staff` | Get all staff | Admin |
+| GET | `/api/admin/staff` | Get all staff (paginated, filterable) | Admin |
 | GET | `/api/admin/staff/:id` | Get staff by ID | Admin |
 | PUT | `/api/admin/staff/:id` | Update staff | Admin |
 | PUT | `/api/admin/staff/:id/deactivate` | Soft delete / deactivate staff | Admin |
@@ -108,7 +109,7 @@ Server will start at `http://localhost:5000`
 |--------|----------|-------------|------|
 | POST | `/api/admin/attendance/check-in` | Mark check-in (one per staff per day) | Admin |
 | PUT | `/api/admin/attendance/check-out` | Mark check-out | Admin |
-| GET | `/api/admin/attendance` | Get attendance (filter by date, staff_id, range) | Admin |
+| GET | `/api/admin/attendance` | Get attendance (paginated, filter by date, staff_id, range) | Admin |
 | PUT | `/api/admin/attendance/:id` | Update attendance record | Admin |
 
 ### Bookings
@@ -116,9 +117,9 @@ Server will start at `http://localhost:5000`
 | Method | Endpoint | Description | Auth |
 |--------|----------|-------------|------|
 | POST | `/api/bookings` | Create booking | Customer |
-| GET | `/api/bookings/my-bookings` | Get customer's bookings | Customer |
+| GET | `/api/bookings/my-bookings` | Get customer's bookings (paginated, filterable) | Customer |
 | PUT | `/api/bookings/:id/cancel` | Cancel booking | Customer |
-| GET | `/api/admin/bookings` | Get all bookings | Admin |
+| GET | `/api/admin/bookings` | Get all bookings (paginated, filterable) | Admin |
 | GET | `/api/admin/bookings/:id` | Get booking details | Admin |
 | PUT | `/api/admin/bookings/:id/status` | Update booking status | Admin |
 
@@ -128,7 +129,7 @@ Server will start at `http://localhost:5000`
 |--------|----------|-------------|------|
 | GET | `/api/admin/dashboard/summary` | **Single summary API**: total/today/confirmed/completed/cancelled bookings, active services, active staff | Admin |
 | GET | `/api/admin/dashboard/stats` | Extended dashboard statistics | Admin |
-| GET | `/api/admin/dashboard/recent-bookings` | Get recent bookings | Admin |
+| GET | `/api/admin/dashboard/recent-bookings` | Get recent bookings (paginated, filterable) | Admin |
 | GET | `/api/admin/dashboard/revenue-by-service` | Revenue by service | Admin |
 | GET | `/api/admin/dashboard/bookings-by-date` | Bookings by date | Admin |
 | GET | `/api/admin/dashboard/top-services` | Top booked services | Admin |
@@ -144,6 +145,22 @@ Server will start at `http://localhost:5000`
 ## API Request & Response Reference
 
 All request bodies are JSON. Include `Authorization: Bearer <token>` for protected routes.
+
+### Pagination & filtering (listing APIs)
+
+All listing APIs (GET endpoints that return a list of items) support:
+
+**Query parameters:**
+- `page` (optional) – Page number, 1-based. Default: `1`.
+- `per_page` (optional) – Items per page. Default: `20`. Maximum: `100` (dashboard recent-bookings default: `10`).
+
+**Response shape:** List responses include pagination metadata:
+- `total` – Total number of items matching the filters.
+- `page` – Current page number.
+- `per_page` – Items per page.
+- `total_pages` – Total number of pages.
+
+Each endpoint also supports **filter** query parameters (documented per endpoint below).
 
 ---
 
@@ -299,7 +316,9 @@ Required: `title`, `description`, `base_price`, `duration`. Optional: `discounte
 
 #### GET `/api/services`
 
-**Query Params:** `status` (optional) – e.g. `Active`, `Inactive`
+**Query Params (all optional):**
+- **Pagination:** `page` (default `1`), `per_page` (default `20`, max `100`)
+- **Filters:** `status` (e.g. `Active`, `Inactive`), `search` (search in title and description, case-insensitive)
 
 **Request Body:** None
 
@@ -322,7 +341,10 @@ Required: `title`, `description`, `base_price`, `duration`. Optional: `discounte
       "updated_at": "2026-02-04T10:00:00.000Z"
     }
   ],
-  "total": 1
+  "total": 1,
+  "page": 1,
+  "per_page": 20,
+  "total_pages": 1
 }
 ```
 
@@ -443,7 +465,9 @@ If the service has active bookings, it is deactivated instead: `{"message": "Ser
 
 #### GET `/api/discounts`
 
-**Query Params:** `service_id`, `is_active` (optional)
+**Query Params (all optional):**
+- **Pagination:** `page` (default `1`), `per_page` (default `20`, max `100`)
+- **Filters:** `service_id`, `is_active` (true/false)
 
 **Request Body:** None
 
@@ -464,7 +488,10 @@ If the service has active bookings, it is deactivated instead: `{"message": "Ser
       "updated_at": "2026-02-04T10:00:00.000Z"
     }
   ],
-  "total": 1
+  "total": 1,
+  "page": 1,
+  "per_page": 20,
+  "total_pages": 1
 }
 ```
 
@@ -576,7 +603,9 @@ Required: `full_name`, `phone`, `role`. Optional: `email`, `working_days`, `shif
 
 #### GET `/api/admin/staff`
 
-**Query Params:** `include_inactive` (true/false), `include_deleted` (true/false), `status` (Active/Inactive)
+**Query Params (all optional):**
+- **Pagination:** `page` (default `1`), `per_page` (default `20`, max `100`)
+- **Filters:** `include_inactive` (true/false), `include_deleted` (true/false), `status` (Active/Inactive), `role` (stylist, receptionist, manager, therapist), `search` (search in full_name, email, phone, case-insensitive)
 
 **Request Body:** None
 
@@ -599,7 +628,10 @@ Required: `full_name`, `phone`, `role`. Optional: `email`, `working_days`, `shif
       "updated_at": "2026-02-04T10:00:00.000Z"
     }
   ],
-  "total": 1
+  "total": 1,
+  "page": 1,
+  "per_page": 20,
+  "total_pages": 1
 }
 ```
 
@@ -746,7 +778,9 @@ Required: `staff_id`, `date`. Optional: `check_out_time` (default current time),
 
 #### GET `/api/admin/attendance`
 
-**Query Params:** `date`, `staff_id`, `start_date`, `end_date` (optional)
+**Query Params (all optional):**
+- **Pagination:** `page` (default `1`), `per_page` (default `20`, max `100`)
+- **Filters:** `date` (single date YYYY-MM-DD), `staff_id`, `start_date` and `end_date` (date range YYYY-MM-DD), `attendance_status` (Present, Absent, Half-day)
 
 **Request Body:** None
 
@@ -766,7 +800,10 @@ Required: `staff_id`, `date`. Optional: `check_out_time` (default current time),
       "updated_at": "2026-02-04T17:00:00.000Z"
     }
   ],
-  "total": 1
+  "total": 1,
+  "page": 1,
+  "per_page": 20,
+  "total_pages": 1
 }
 ```
 
@@ -842,7 +879,9 @@ Required: `service_id`, `date` (YYYY-MM-DD), `time_slot` (HH:MM). Optional: `not
 
 #### GET `/api/bookings/my-bookings` (Customer)
 
-**Query Params:** `status` (optional) – Pending, Confirmed, Completed, Cancelled
+**Query Params (all optional):**
+- **Pagination:** `page` (default `1`), `per_page` (default `20`, max `100`)
+- **Filters:** `status` (Pending, Confirmed, Completed, Cancelled), `date_from` (YYYY-MM-DD), `date_to` (YYYY-MM-DD)
 
 **Request Body:** None
 
@@ -868,7 +907,10 @@ Required: `service_id`, `date` (YYYY-MM-DD), `time_slot` (HH:MM). Optional: `not
       "updated_at": "2026-02-04T10:00:00.000Z"
     }
   ],
-  "total": 1
+  "total": 1,
+  "page": 1,
+  "per_page": 20,
+  "total_pages": 1
 }
 ```
 
@@ -892,7 +934,9 @@ Required: `service_id`, `date` (YYYY-MM-DD), `time_slot` (HH:MM). Optional: `not
 
 #### GET `/api/admin/bookings` (Admin)
 
-**Query Params:** `status`, `date`, `service_id` (optional)
+**Query Params (all optional):**
+- **Pagination:** `page` (default `1`), `per_page` (default `20`, max `100`)
+- **Filters:** `status` (Pending, Confirmed, Completed, Cancelled), `date` (single date YYYY-MM-DD), `date_from` and `date_to` (date range YYYY-MM-DD), `service_id`, `customer_id`
 
 **Request Body:** None
 
@@ -918,7 +962,10 @@ Required: `service_id`, `date` (YYYY-MM-DD), `time_slot` (HH:MM). Optional: `not
       "updated_at": "2026-02-04T10:00:00.000Z"
     }
   ],
-  "total": 1
+  "total": 1,
+  "page": 1,
+  "per_page": 20,
+  "total_pages": 1
 }
 ```
 
@@ -1029,7 +1076,9 @@ Required: `service_id`, `date` (YYYY-MM-DD), `time_slot` (HH:MM). Optional: `not
 
 #### GET `/api/admin/dashboard/recent-bookings`
 
-**Query Params:** `limit` (optional, default 10)
+**Query Params (all optional):**
+- **Pagination:** `page` (default `1`), `per_page` (default `10`, max `100`)
+- **Filters:** `status` (Pending, Confirmed, Completed, Cancelled), `date` (YYYY-MM-DD)
 
 **Request Body:** None
 
@@ -1048,7 +1097,10 @@ Required: `service_id`, `date` (YYYY-MM-DD), `time_slot` (HH:MM). Optional: `not
       "created_at": "2026-02-04T10:00:00.000Z"
     }
   ],
-  "total": 10
+  "total": 10,
+  "page": 1,
+  "per_page": 10,
+  "total_pages": 1
 }
 ```
 

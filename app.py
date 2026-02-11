@@ -3,6 +3,7 @@ Salon Shop Backend - Flask Application
 Main application file containing all API endpoints
 """
 
+import math
 import os
 from datetime import datetime, timedelta
 from functools import wraps
@@ -181,6 +182,32 @@ def get_active_discount(service_id: str) -> dict:
         'end_date': {'$gte': today}
     })
     return discount
+
+
+def parse_pagination(max_per_page=100, default_per_page=20):
+    """Parse page and per_page from request args. Returns (skip, limit, page, per_page)."""
+    try:
+        page = max(1, int(request.args.get('page', 1)))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        per_page = min(max_per_page, max(1, int(request.args.get('per_page', default_per_page))))
+    except (TypeError, ValueError):
+        per_page = default_per_page
+    skip = (page - 1) * per_page
+    return skip, per_page, page, per_page
+
+
+def paginated_response(items_key: str, items: list, total: int, page: int, per_page: int):
+    """Build JSON response with pagination metadata."""
+    total_pages = math.ceil(total / per_page) if per_page > 0 else 0
+    return {
+        items_key: items,
+        'total': total,
+        'page': page,
+        'per_page': per_page,
+        'total_pages': total_pages
+    }
 
 
 def calculate_booking_price(service: dict) -> tuple:
@@ -408,14 +435,23 @@ def create_service():
 
 @app.route('/api/services', methods=['GET'])
 def get_all_services():
-    """Get all services (Public)"""
+    """Get all services (Public). Supports pagination and filters."""
     status_filter = request.args.get('status')
+    search = request.args.get('search', '').strip()
+    skip, limit, page, per_page = parse_pagination()
     
     query = {}
     if status_filter:
         query['status'] = status_filter
+    if search:
+        query['$or'] = [
+            {'title': {'$regex': search, '$options': 'i'}},
+            {'description': {'$regex': search, '$options': 'i'}}
+        ]
     
-    services = list(services_collection.find(query).sort('created_at', -1))
+    total = services_collection.count_documents(query)
+    cursor = services_collection.find(query).sort('created_at', -1).skip(skip).limit(limit)
+    services = list(cursor)
     
     # Add discount information to each service
     for service in services:
@@ -433,10 +469,7 @@ def get_all_services():
             service['has_discount'] = False
             service['final_price'] = service['base_price']
     
-    return jsonify({
-        'services': serialize_docs(services),
-        'total': len(services)
-    }), 200
+    return jsonify(paginated_response('services', serialize_docs(services), total, page, per_page)), 200
 
 
 @app.route('/api/services/<service_id>', methods=['GET'])
@@ -619,9 +652,10 @@ def create_discount():
 @app.route('/api/discounts', methods=['GET'])
 @admin_required
 def get_all_discounts():
-    """Get all discounts (Admin only)"""
+    """Get all discounts (Admin only). Supports pagination and filters."""
     service_id = request.args.get('service_id')
     is_active = request.args.get('is_active')
+    skip, limit, page, per_page = parse_pagination()
     
     query = {}
     if service_id:
@@ -629,7 +663,9 @@ def get_all_discounts():
     if is_active is not None:
         query['is_active'] = is_active.lower() == 'true'
     
-    discounts = list(discounts_collection.find(query).sort('created_at', -1))
+    total = discounts_collection.count_documents(query)
+    cursor = discounts_collection.find(query).sort('created_at', -1).skip(skip).limit(limit)
+    discounts = list(cursor)
     
     # Add service information to each discount
     for discount in discounts:
@@ -637,10 +673,7 @@ def get_all_discounts():
         if service:
             discount['service_title'] = service['title']
     
-    return jsonify({
-        'discounts': serialize_docs(discounts),
-        'total': len(discounts)
-    }), 200
+    return jsonify(paginated_response('discounts', serialize_docs(discounts), total, page, per_page)), 200
 
 
 @app.route('/api/discounts/<discount_id>', methods=['GET'])
@@ -790,26 +823,36 @@ def create_staff():
 @app.route('/api/admin/staff', methods=['GET'])
 @admin_required
 def get_all_staff():
-    """Get all staff members (Admin only). Excludes soft-deleted by default."""
+    """Get all staff members (Admin only). Excludes soft-deleted by default. Supports pagination and filters."""
     include_inactive = request.args.get('include_inactive', 'false').lower() == 'true'
     include_deleted = request.args.get('include_deleted', 'false').lower() == 'true'
     status_filter = request.args.get('status')
+    role_filter = request.args.get('role')
+    search = request.args.get('search', '').strip()
+    skip, limit, page, per_page = parse_pagination()
     
     query = {'is_deleted': False} if not include_deleted else {}
     if status_filter:
         query['status'] = status_filter
+    if role_filter:
+        query['role'] = role_filter
     if not include_deleted and not status_filter and not include_inactive:
         query['status'] = 'Active'
+    if search:
+        query['$or'] = [
+            {'full_name': {'$regex': search, '$options': 'i'}},
+            {'email': {'$regex': search, '$options': 'i'}},
+            {'phone': {'$regex': search, '$options': 'i'}}
+        ]
     
-    staff_list = list(staff_collection.find(query).sort('created_at', -1))
+    total = staff_collection.count_documents(query)
+    cursor = staff_collection.find(query).sort('created_at', -1).skip(skip).limit(limit)
+    staff_list = list(cursor)
     
     for s in staff_list:
         s['staff_id'] = str(s['_id'])
     
-    return jsonify({
-        'staff': serialize_docs(staff_list),
-        'total': len(staff_list)
-    }), 200
+    return jsonify(paginated_response('staff', serialize_docs(staff_list), total, page, per_page)), 200
 
 
 @app.route('/api/admin/staff/<staff_id>', methods=['GET'])
@@ -1001,11 +1044,13 @@ def attendance_checkout():
 @app.route('/api/admin/attendance', methods=['GET'])
 @admin_required
 def get_attendance_list():
-    """Get attendance records (Admin only). Filter by date, staff_id, or date range."""
+    """Get attendance records (Admin only). Filter by date, staff_id, or date range. Supports pagination."""
     date_filter = request.args.get('date')
     staff_id = request.args.get('staff_id')
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
+    attendance_status = request.args.get('attendance_status')
+    skip, limit, page, per_page = parse_pagination()
     
     query = {}
     if date_filter:
@@ -1015,13 +1060,14 @@ def get_attendance_list():
     if start_date and end_date:
         if validate_date_format(start_date) and validate_date_format(end_date):
             query['date'] = {'$gte': start_date, '$lte': end_date}
+    if attendance_status:
+        query['attendance_status'] = attendance_status
     
-    records = list(attendance_collection.find(query).sort('date', -1))
+    total = attendance_collection.count_documents(query)
+    cursor = attendance_collection.find(query).sort('date', -1).skip(skip).limit(limit)
+    records = list(cursor)
     
-    return jsonify({
-        'attendance': serialize_docs(records),
-        'total': len(records)
-    }), 200
+    return jsonify(paginated_response('attendance', serialize_docs(records), total, page, per_page)), 200
 
 
 @app.route('/api/admin/attendance/<attendance_id>', methods=['PUT'])
@@ -1167,21 +1213,29 @@ def create_booking():
 @app.route('/api/bookings/my-bookings', methods=['GET'])
 @customer_required
 def get_customer_bookings():
-    """Get all bookings for the logged-in customer"""
+    """Get all bookings for the logged-in customer. Supports pagination and filters."""
     customer_id = get_jwt_identity()
-    
     status_filter = request.args.get('status')
+    date_from = request.args.get('date_from')
+    date_to = request.args.get('date_to')
+    skip, limit, page, per_page = parse_pagination()
     
     query = {'customer_id': customer_id}
     if status_filter:
         query['status'] = status_filter
+    if (date_from and validate_date_format(date_from)) or (date_to and validate_date_format(date_to)):
+        date_range = {}
+        if date_from and validate_date_format(date_from):
+            date_range['$gte'] = date_from
+        if date_to and validate_date_format(date_to):
+            date_range['$lte'] = date_to
+        query['date'] = date_range
     
-    bookings = list(bookings_collection.find(query).sort('date', -1))
+    total = bookings_collection.count_documents(query)
+    cursor = bookings_collection.find(query).sort('date', -1).skip(skip).limit(limit)
+    bookings = list(cursor)
     
-    return jsonify({
-        'bookings': serialize_docs(bookings),
-        'total': len(bookings)
-    }), 200
+    return jsonify(paginated_response('bookings', serialize_docs(bookings), total, page, per_page)), 200
 
 
 @app.route('/api/bookings/<booking_id>/cancel', methods=['PUT'])
@@ -1233,25 +1287,37 @@ def cancel_booking(booking_id):
 @app.route('/api/admin/bookings', methods=['GET'])
 @admin_required
 def get_all_bookings():
-    """Get all bookings (Admin only)"""
+    """Get all bookings (Admin only). Supports pagination and filters."""
     status_filter = request.args.get('status')
     date_filter = request.args.get('date')
+    date_from = request.args.get('date_from')
+    date_to = request.args.get('date_to')
     service_id = request.args.get('service_id')
+    customer_id = request.args.get('customer_id')
+    skip, limit, page, per_page = parse_pagination()
     
     query = {}
     if status_filter:
         query['status'] = status_filter
-    if date_filter:
+    if date_filter and validate_date_format(date_filter):
         query['date'] = date_filter
+    elif (date_from and validate_date_format(date_from)) or (date_to and validate_date_format(date_to)):
+        date_range = {}
+        if date_from and validate_date_format(date_from):
+            date_range['$gte'] = date_from
+        if date_to and validate_date_format(date_to):
+            date_range['$lte'] = date_to
+        query['date'] = date_range
     if service_id:
         query['service_id'] = service_id
+    if customer_id:
+        query['customer_id'] = customer_id
     
-    bookings = list(bookings_collection.find(query).sort('created_at', -1))
+    total = bookings_collection.count_documents(query)
+    cursor = bookings_collection.find(query).sort('created_at', -1).skip(skip).limit(limit)
+    bookings = list(cursor)
     
-    return jsonify({
-        'bookings': serialize_docs(bookings),
-        'total': len(bookings)
-    }), 200
+    return jsonify(paginated_response('bookings', serialize_docs(bookings), total, page, per_page)), 200
 
 
 @app.route('/api/admin/bookings/<booking_id>', methods=['GET'])
@@ -1432,19 +1498,22 @@ def get_dashboard_stats():
 @app.route('/api/admin/dashboard/recent-bookings', methods=['GET'])
 @admin_required
 def get_recent_bookings():
-    """Get recent bookings for dashboard (Admin only)"""
-    limit = int(request.args.get('limit', 10))
+    """Get recent bookings for dashboard (Admin only). Supports pagination and filters."""
+    status_filter = request.args.get('status')
+    date_filter = request.args.get('date')
+    skip, limit, page, per_page = parse_pagination(default_per_page=10)
     
-    bookings = list(
-        bookings_collection.find()
-        .sort('created_at', -1)
-        .limit(limit)
-    )
+    query = {}
+    if status_filter:
+        query['status'] = status_filter
+    if date_filter and validate_date_format(date_filter):
+        query['date'] = date_filter
     
-    return jsonify({
-        'bookings': serialize_docs(bookings),
-        'total': len(bookings)
-    }), 200
+    total = bookings_collection.count_documents(query)
+    cursor = bookings_collection.find(query).sort('created_at', -1).skip(skip).limit(limit)
+    bookings = list(cursor)
+    
+    return jsonify(paginated_response('bookings', serialize_docs(bookings), total, page, per_page)), 200
 
 
 @app.route('/api/admin/dashboard/revenue-by-service', methods=['GET'])
