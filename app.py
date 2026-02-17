@@ -1138,9 +1138,10 @@ def attendance_checkout():
 @app.route('/api/admin/attendance', methods=['GET'])
 @admin_required
 def get_attendance_list():
-    """Get attendance records (Admin only). Filter by date, staff_id, or date range. Supports pagination."""
+    """Get attendance records (Admin only). Filter by date, staff_id, name, or date range. Supports pagination."""
     date_filter = request.args.get('date')
     staff_id = request.args.get('staff_id')
+    name = request.args.get('name', '').strip()
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
     attendance_status = request.args.get('attendance_status')
@@ -1149,7 +1150,15 @@ def get_attendance_list():
     query = {}
     if date_filter:
         query['date'] = date_filter
-    if staff_id:
+    if name:
+        # Search by staff name (case-insensitive partial match on full_name)
+        staff_matching = list(staff_collection.find(
+            {'full_name': {'$regex': name, '$options': 'i'}, 'is_deleted': False},
+            {'_id': 1}
+        ))
+        staff_ids = [str(s['_id']) for s in staff_matching]
+        query['staff_id'] = {'$in': staff_ids}
+    elif staff_id:
         query['staff_id'] = staff_id
     if start_date and end_date:
         if validate_date_format(start_date) and validate_date_format(end_date):

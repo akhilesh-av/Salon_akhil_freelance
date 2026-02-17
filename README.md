@@ -109,7 +109,7 @@ Server will start at `http://localhost:5000`
 |--------|----------|-------------|------|
 | POST | `/api/admin/attendance/check-in` | Mark check-in (one per staff per day) | Admin |
 | PUT | `/api/admin/attendance/check-out` | Mark check-out | Admin |
-| GET | `/api/admin/attendance` | Get attendance (paginated, filter by date, staff_id, range) | Admin |
+| GET | `/api/admin/attendance` | Get attendance (paginated, filter by date, staff_id, name, range) | Admin |
 | PUT | `/api/admin/attendance/:id` | Update attendance record | Admin |
 
 ### Bookings
@@ -780,7 +780,7 @@ Required: `staff_id`, `date`. Optional: `check_out_time` (default current time),
 
 **Query Params (all optional):**
 - **Pagination:** `page` (default `1`), `per_page` (default `20`, max `100`)
-- **Filters:** `date` (single date YYYY-MM-DD), `staff_id`, `start_date` and `end_date` (date range YYYY-MM-DD), `attendance_status` (Present, Absent, Half-day)
+- **Filters:** `date` (single date YYYY-MM-DD), `staff_id`, `name` (search by staff name, case-insensitive), `start_date` and `end_date` (date range YYYY-MM-DD), `attendance_status` (Present, Absent, Half-day)
 
 **Request Body:** None
 
